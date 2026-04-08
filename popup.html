@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SWISH</title>
+  <link rel="stylesheet" href="src/popup/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>👀 SWISH</h1>
+      <p class="tagline">Skip With Intense Side-eye, Honey</p>
+    </header>
+    <main>
+      <div class="status-card">
+        <span id="status-text">Initializing...</span>
+      </div>
+      <div class="controls">
+        <div class="toggle-row">
+          <label for="enabled">Detection</label>
+          <input type="checkbox" id="enabled">
+        </div>
+        <div class="toggle-row">
+          <label for="audio">Audio Reactions</label>
+          <input type="checkbox" id="audio">
+        </div>
+        <div class="toggle-row">
+          <label for="overlay">Show Overlay</label>
+          <input type="checkbox" id="overlay">
+        </div>
+        <div class="slider-row">
+          <label for="sensitivity">Sensitivity</label>
+          <input type="range" id="sensitivity" min="10" max="90" value="50">
+          <span id="sensitivity-value">50</span>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-value" id="rolls">0</span>
+          <span class="stat-label">Eye Rolls</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="skips">0</span>
+          <span class="stat-label">Reels Skipped</span>
+        </div>
+      </div>
+      <div class="message" id="message">
+        Ready to judge your content.
+      </div>
+    </main>
+  </div>
+  <script type="module" src="src/popup/index.ts"></script>
+</body>
+</html>
