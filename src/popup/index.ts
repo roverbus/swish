@@ -8,6 +8,17 @@ const FUNNY_MESSAGES = [
   'The algorithm is you.',
 ];
 
+async function sendToActiveTab(message: object): Promise<void> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await chrome.tabs.sendMessage(tab.id, message);
+    }
+  } catch {
+    // Tab might not have content script loaded
+  }
+}
+
 async function init() {
   const settings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }) as Settings;
   const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' }) as DetectionState;
@@ -22,6 +33,8 @@ async function init() {
   const skipsEl = document.getElementById('skips')!;
   const messageEl = document.getElementById('message')!;
 
+  let currentSettings = { ...settings };
+
   enabledEl.checked = settings.enabled;
   audioEl.checked = settings.audioEnabled;
   overlayEl.checked = settings.overlayEnabled;
@@ -35,9 +48,21 @@ async function init() {
   messageEl.textContent = FUNNY_MESSAGES[Math.floor(Math.random() * FUNNY_MESSAGES.length)];
 
   enabledEl.addEventListener('change', async () => {
+    currentSettings.enabled = enabledEl.checked;
     await chrome.runtime.sendMessage({ type: 'SET_SETTINGS', settings: { enabled: enabledEl.checked } });
-    const newState = await chrome.runtime.sendMessage({ type: 'GET_STATE' }) as DetectionState;
-    updateStatus(newState);
+
+    // If enabling, trigger initialization on the active tab
+    if (enabledEl.checked) {
+      statusTextEl.textContent = '📷 Requesting camera...';
+      statusTextEl.className = 'status-warning';
+      await sendToActiveTab({ type: 'INIT_DETECTOR' });
+    }
+
+    // Poll for state update
+    setTimeout(async () => {
+      const newState = await chrome.runtime.sendMessage({ type: 'GET_STATE' }) as DetectionState;
+      updateStatus(newState);
+    }, 1000);
   });
 
   audioEl.addEventListener('change', () => {
@@ -55,9 +80,9 @@ async function init() {
 
   function updateStatus(s: DetectionState) {
     if (s.error) {
-      statusTextEl.textContent = s.error;
+      statusTextEl.textContent = `❌ ${s.error}`;
       statusTextEl.className = 'status-inactive';
-    } else if (!settings.enabled && !enabledEl.checked) {
+    } else if (!currentSettings.enabled && !enabledEl.checked) {
       statusTextEl.textContent = '⏸ Detection paused';
       statusTextEl.className = 'status-warning';
     } else if (!s.cameraActive) {
@@ -74,6 +99,14 @@ async function init() {
       statusTextEl.className = 'status-active';
     }
   }
+
+  // Poll state every 2 seconds while popup is open
+  setInterval(async () => {
+    const newState = await chrome.runtime.sendMessage({ type: 'GET_STATE' }) as DetectionState;
+    rollsEl.textContent = String(newState.sessionRolls);
+    skipsEl.textContent = String(newState.sessionSkips);
+    updateStatus(newState);
+  }, 2000);
 }
 
 init();

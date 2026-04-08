@@ -163,7 +163,8 @@ function applySettings(newSettings: Settings): void {
       detector.stop();
       updateState({ detecting: false });
     }
-  } else if (settings.enabled && isOnReelsPage) {
+  } else if (settings.enabled) {
+    // Initialize even if not on Reels page — user explicitly enabled
     initializeDetector();
   }
 
@@ -181,6 +182,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'SKIP_REEL') {
     skipReel();
     sendResponse({ success: true });
+  } else if (message.type === 'GET_CONTENT_STATE') {
+    sendResponse({
+      isOnReelsPage,
+      detectorActive: detector !== null,
+    });
+  } else if (message.type === 'INIT_DETECTOR') {
+    // Force initialize even if not on reels page (for testing)
+    initializeDetector().then(() => {
+      sendResponse({ success: true });
+    }).catch((err) => {
+      sendResponse({ success: false, error: err.message });
+    });
+    return true; // async response
   }
   return false;
 });
@@ -224,4 +238,8 @@ async function start(): Promise<void> {
 }
 
 window.addEventListener('beforeunload', destroyDetector);
-start();
+
+// Export for CRXJS loader
+export function onExecute() {
+  start();
+}

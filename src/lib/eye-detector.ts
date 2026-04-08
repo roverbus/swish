@@ -99,8 +99,10 @@ export class EyeRollDetector {
   }
 
   start(): void {
+    console.log('EyeRollDetector.start() called', { running: this.running, hasDetector: !!this.detector, hasVideo: !!this.video });
     if (this.running || !this.detector || !this.video) return;
     this.running = true;
+    console.log('Starting detection loop...');
     this.detectLoop();
   }
 
@@ -130,6 +132,7 @@ export class EyeRollDetector {
 
     try {
       const faces = await this.detector.estimateFaces(this.video);
+      console.log('Faces detected:', faces.length);
 
       if (faces.length === 0) {
         this.notifyStateChange({ faceDetected: false });
