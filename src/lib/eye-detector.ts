@@ -19,6 +19,7 @@ export class EyeRollDetector {
   private running = false;
   private onEyeRoll: EyeRollCallback | null = null;
   private onStateChange: ((state: { cameraActive: boolean; modelLoaded: boolean; faceDetected: boolean }) => void) | null = null;
+  public onFrame: ((data: { faces: number; irisPosition: number | null; features: number[] | null }) => void) | null = null;
 
   private sensitivity = 50; // 0-100
   private cooldownMs = 1500;
@@ -48,10 +49,20 @@ export class EyeRollDetector {
     // Request camera access
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 320, height: 240, facingMode: 'user' },
+        video: { width: 640, height: 480, facingMode: 'user' },
         audio: false,
       });
       this.video.srcObject = this.stream;
+      
+      // FaceMesh requires video dimensions and loaded data
+      await new Promise<void>((resolve) => {
+        if (!this.video) return;
+        this.video.onloadeddata = () => {
+          this.video!.width = this.video!.videoWidth;
+          this.video!.height = this.video!.videoHeight;
+          resolve();
+        };
+      });
       await this.video.play();
       this.notifyStateChange({ cameraActive: true });
     } catch {
@@ -98,6 +109,15 @@ export class EyeRollDetector {
     }
   }
 
+  // Calibration samples for KNN predictor
+  private neutralSamples: number[][] = [];
+  private rollSamples: number[][] = [];
+
+  public train(neutralSamples: number[][], rollSamples: number[][]) {
+    this.neutralSamples = neutralSamples;
+    this.rollSamples = rollSamples;
+  }
+
   start(): void {
     console.log('EyeRollDetector.start() called', { running: this.running, hasDetector: !!this.detector, hasVideo: !!this.video });
     if (this.running || !this.detector || !this.video) return;
@@ -132,17 +152,30 @@ export class EyeRollDetector {
 
     try {
       const faces = await this.detector.estimateFaces(this.video);
-      console.log('Faces detected:', faces.length);
 
       if (faces.length === 0) {
         this.notifyStateChange({ faceDetected: false });
         this.consecutiveRollFrames = 0;
+        if (this.onFrame) this.onFrame({ faces: 0, irisPosition: null, features: null });
       } else {
         this.notifyStateChange({ faceDetected: true });
         const face = faces[0];
         const eyePos = this.extractEyePosition(face.keypoints);
+        const features = this.extractFeatureVector(face.keypoints);
+        
+        // Calculate raw iris position for legacy fallback
+        const leftEyeHeight = eyePos.leftEyeBottomY - eyePos.leftEyeTopY;
+        const rightEyeHeight = eyePos.rightEyeBottomY - eyePos.rightEyeTopY;
+        let avgIrisPosition = 0;
+        if (leftEyeHeight > 0 && rightEyeHeight > 0) {
+          const leftIrisPosition = (eyePos.leftEyeBottomY - eyePos.leftIrisY) / leftEyeHeight;
+          const rightIrisPosition = (eyePos.rightEyeBottomY - eyePos.rightIrisY) / rightEyeHeight;
+          avgIrisPosition = (leftIrisPosition + rightIrisPosition) / 2;
+        }
 
-        if (this.isEyeRoll(eyePos)) {
+        if (this.onFrame) this.onFrame({ faces: faces.length, irisPosition: avgIrisPosition, features });
+
+        if (this.isEyeRoll(eyePos, features)) {
           this.consecutiveRollFrames++;
           if (this.consecutiveRollFrames >= this.REQUIRED_ROLL_FRAMES) {
             this.triggerEyeRoll();
@@ -161,6 +194,37 @@ export class EyeRollDetector {
     }
   }
 
+  private extractFeatureVector(keypoints: faceLandmarksDetection.Keypoint[]): number[] {
+    const get = (idx: number) => keypoints[idx];
+    
+    // Use distance between eye inner corners as scale
+    // Left inner: 133, Right inner: 362
+    const dx = Math.abs(get(362).x - get(133).x);
+    const scale = dx > 0 ? dx : 1;
+
+    // We measure vertical variations (y starts top, goes down)
+    // Left eye features
+    const l_iris_y = get(468).y;
+    const l_corner_inner_y = get(133).y;
+    const l_corner_outer_y = get(33).y;
+    const l_top_y = get(159).y;
+    const l_bottom_y = get(145).y;
+
+    // Right eye features
+    const r_iris_y = get(473).y;
+    const r_corner_inner_y = get(362).y;
+    const r_corner_outer_y = get(263).y;
+    const r_top_y = get(386).y;
+    const r_bottom_y = get(374).y;
+
+    return [
+      (l_iris_y - (l_corner_inner_y + l_corner_outer_y) / 2) / scale, // relative pupil height left
+      (r_iris_y - (r_corner_inner_y + r_corner_outer_y) / 2) / scale, // relative pupil height right
+      (l_bottom_y - l_top_y) / scale, // EAR - left
+      (r_bottom_y - r_top_y) / scale, // EAR - right
+    ];
+  }
+
   private extractEyePosition(keypoints: faceLandmarksDetection.Keypoint[]): EyePosition {
     const get = (idx: number) => keypoints[idx];
 
@@ -174,9 +238,13 @@ export class EyeRollDetector {
     };
   }
 
-  private isEyeRoll(pos: EyePosition): boolean {
-    // Calculate how far up the iris is within the eye socket
-    // 0 = bottom, 1 = top
+  private isEyeRoll(pos: EyePosition, features: number[]): boolean {
+    // If we have calibration data, use KNN predictor
+    if (this.neutralSamples.length > 0 && this.rollSamples.length > 0) {
+      return this.predictKNN(features);
+    }
+
+    // Default heuristic fallback
     const leftEyeHeight = pos.leftEyeBottomY - pos.leftEyeTopY;
     const rightEyeHeight = pos.rightEyeBottomY - pos.rightEyeTopY;
 
@@ -184,15 +252,37 @@ export class EyeRollDetector {
 
     const leftIrisPosition = (pos.leftEyeBottomY - pos.leftIrisY) / leftEyeHeight;
     const rightIrisPosition = (pos.rightEyeBottomY - pos.rightIrisY) / rightEyeHeight;
-
-    // Average position of both irises
     const avgIrisPosition = (leftIrisPosition + rightIrisPosition) / 2;
 
-    // Threshold: sensitivity 0 = need iris at 95% up, sensitivity 100 = need iris at 55% up
-    // Default (50) = need iris at 75% up
     const threshold = 0.95 - (this.sensitivity / 100) * 0.4;
-
     return avgIrisPosition > threshold;
+  }
+
+  private predictKNN(features: number[]): boolean {
+    const distances: { dist: number; isRoll: boolean }[] = [];
+    
+    const addDists = (samples: number[][], isRoll: boolean) => {
+      for (const sample of samples) {
+        let dist = 0;
+        for (let i = 0; i < features.length; i++) {
+          dist += (features[i] - sample[i]) ** 2;
+        }
+        distances.push({ dist, isRoll });
+      }
+    };
+
+    addDists(this.neutralSamples, false);
+    addDists(this.rollSamples, true);
+
+    distances.sort((a, b) => a.dist - b.dist);
+
+    let rollVotes = 0;
+    const k = Math.min(3, distances.length);
+    for (let i = 0; i < k; i++) {
+      if (distances[i].isRoll) rollVotes++;
+    }
+
+    return rollVotes > k / 2;
   }
 
   private triggerEyeRoll(): void {

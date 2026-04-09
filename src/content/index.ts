@@ -28,16 +28,61 @@ function skipReel(): void {
 
   console.log('⏭️ Skipping reel...');
 
-  // Keyboard navigation for Reels
-  const event = new KeyboardEvent('keydown', {
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    keyCode: 40,
-    which: 40,
-    bubbles: true,
-    cancelable: true,
-  });
-  document.dispatchEvent(event);
+  // Try 1: Aggressive mouse event sequence on the Next button or its containing elements
+  const nextSvg = document.querySelector('svg[aria-label="Next"], svg[aria-label="Next video"], svg[aria-label="Go to next video"]');
+  let clicked = false;
+
+  if (nextSvg) {
+    // Try the closest interactive container, fallback to the SVG itself
+    const target = nextSvg.closest('button, [role="button"], [tabindex="0"]') || nextSvg;
+    console.log('Found next button target, unleashing aggressive click events...');
+    
+    // React and other modern frameworks sometimes listen to pointerdown/up instead of click,
+    // and they verify bubbles/cancelable.
+    const events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+    events.forEach(type => {
+      target.dispatchEvent(new MouseEvent(type, {
+        view: window,
+        bubbles: true,
+        cancelable: true,
+        buttons: 1
+      }));
+    });
+    
+    // Also try the raw .click() on the target and its parent just to be absolutely sure
+    if (target instanceof HTMLElement) target.click();
+    if (target.parentElement instanceof HTMLElement) target.parentElement.click();
+    
+    clicked = true;
+  }
+
+  // Strategy 2: Find the scrollable container for the current video and scroll it
+  // This is the most robust method and works regardless of button presence or language.
+  console.log('Button not found or failed! Attempting container scroll...');
+  const videos = document.querySelectorAll('video');
+  let scrolled = false;
+
+  for (const video of Array.from(videos)) {
+    const rect = video.getBoundingClientRect();
+    if (rect.top >= -500 && rect.top <= window.innerHeight) {
+      let parent = video.parentElement;
+      while (parent) {
+        const style = window.getComputedStyle(parent);
+        if ((style.overflowY === 'scroll' || style.overflowY === 'auto') && parent.scrollHeight > parent.clientHeight) {
+          parent.scrollBy({ top: parent.clientHeight * 0.9, behavior: 'smooth' });
+          scrolled = true;
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      if (scrolled) break;
+    }
+  }
+
+  // Strategy 3: Fallback generic ArrowDown event
+  if (!scrolled) {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', keyCode: 40, bubbles: true }));
+  }
 
   // Update stats
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state: { sessionSkips: 1 } }).catch(() => {});
@@ -106,6 +151,12 @@ async function initializeDetector(): Promise<void> {
     await detector.initialize();
     detector.setSensitivity(settings.sensitivity);
     detector.setCooldown(settings.cooldownMs);
+    
+    // Load custom calibration map if available
+    if (settings.calibrationProfiles && settings.calibrationProfiles.neutral.length > 0) {
+      console.log('Brain uploading: using custom KNN calibration map');
+      detector.train(settings.calibrationProfiles.neutral, settings.calibrationProfiles.roll);
+    }
 
     // Connect video to overlay
     const video = detector.getVideoElement();
@@ -155,6 +206,10 @@ function applySettings(newSettings: Settings): void {
   if (detector) {
     detector.setSensitivity(settings.sensitivity);
     detector.setCooldown(settings.cooldownMs);
+    
+    if (settings.calibrationProfiles && settings.calibrationProfiles.neutral.length > 0) {
+      detector.train(settings.calibrationProfiles.neutral, settings.calibrationProfiles.roll);
+    }
 
     if (settings.enabled && !wasEnabled) {
       detector.start();

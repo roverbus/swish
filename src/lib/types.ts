@@ -4,6 +4,10 @@ export interface Settings {
   audioEnabled: boolean;
   overlayEnabled: boolean;
   cooldownMs: number;
+  calibrationProfiles?: {
+    neutral: number[][]; // normalized vectors
+    roll: number[][];    // normalized vectors
+  };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -12,6 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   audioEnabled: true,
   overlayEnabled: true,
   cooldownMs: 1500,
+  calibrationProfiles: { neutral: [], roll: [] },
 };
 
 export interface DetectionState {
