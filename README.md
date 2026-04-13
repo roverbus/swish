@@ -1,8 +1,8 @@
-# 👀 SWISH
+# 👀 SWISH 🙄
 
 **Skip With Intense Side-eye, Honey**
 
-A Chrome extension that detects when you roll your eyes and automatically advances to the next Instagram Reel. Because sometimes swiping is too much effort, but judging content with your eyeballs? *Chef's kiss.*
+A Chrome extension that detects when you roll your eyes 🙄 and automatically advances to the next Instagram Reel. Because sometimes swiping is too much effort, but judging content with your eyeballs? *Chef's kiss.*
 
 > "Your side-eye now has superpowers."
 
